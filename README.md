@@ -1,4 +1,4 @@
-# tron.rs
+# tron-rust
 
 > [!WARNING]
 > Work in progress, implementation incomplete.
