@@ -2,6 +2,8 @@
 
 > [!WARNING]
 > Work in progress, implementation incomplete.
+>
+> The implementation work is being done on the [impl](https://github.com/oliverlambson/tron-rust/tree/impl) branch, check that out for progress in the meantime.
 
 Rust implementation of the [TRON](https://github.com/delaneyj/tron/tree/main) binary format, with Python bindings.
 
