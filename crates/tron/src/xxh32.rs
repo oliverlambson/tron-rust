@@ -110,7 +110,9 @@ mod test {
 
     #[test]
     fn xxh32_sanity() {
-        let json = include_str!("../tests/xxhash_sanity_test_vectors.json");
+        let json = include_str!(
+            "../../../tron-shared/shared/testdata/vectors/xxhash_sanity_test_vectors.json"
+        );
         let vectors: TestVectors = serde_json::from_str(json).unwrap();
 
         for case in &vectors.arrays.xxh32_testdata {
