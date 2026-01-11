@@ -3,6 +3,7 @@ pub mod document;
 pub mod encode;
 pub mod footer;
 pub mod map;
+pub mod proxy;
 pub mod value;
 pub(crate) mod xxh32;
 

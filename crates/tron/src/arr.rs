@@ -159,8 +159,13 @@ fn bit_set(bitmap: u16, slot: u8) -> bool {
 /// * `length` - Total array length (from root node)
 ///
 /// # Returns
-/// `Some(ValueNode)` if index is valid and element exists, `None` otherwise.
-pub fn arr_get<'a>(buffer: &'a [u8], node_addr: u32, index: u32, length: u32) -> Option<ValueNode<'a>> {
+/// `Some((ValueNode, address))` if index is valid and element exists, `None` otherwise.
+pub fn arr_get<'a>(
+    buffer: &'a [u8],
+    node_addr: u32,
+    index: u32,
+    length: u32,
+) -> Option<(ValueNode<'a>, u32)> {
     // Bounds check
     if index >= length {
         return None;
@@ -176,7 +181,11 @@ pub fn arr_get<'a>(buffer: &'a [u8], node_addr: u32, index: u32, length: u32) ->
 }
 
 /// Internal recursive traversal for array nodes.
-fn arr_get_node<'a>(buffer: &'a [u8], arr: &ArrValue<'a>, index: u32) -> Option<ValueNode<'a>> {
+fn arr_get_node<'a>(
+    buffer: &'a [u8],
+    arr: &ArrValue<'a>,
+    index: u32,
+) -> Option<(ValueNode<'a>, u32)> {
     match arr {
         ArrValue::Root(root) => arr_get_root(buffer, root, index),
         ArrValue::Child(child) => arr_get_child(buffer, child, index),
@@ -184,7 +193,11 @@ fn arr_get_node<'a>(buffer: &'a [u8], arr: &ArrValue<'a>, index: u32) -> Option<
 }
 
 /// Traverse from a root array node.
-fn arr_get_root<'a>(buffer: &'a [u8], root: &ArrRootValue<'a>, index: u32) -> Option<ValueNode<'a>> {
+fn arr_get_root<'a>(
+    buffer: &'a [u8],
+    root: &ArrRootValue<'a>,
+    index: u32,
+) -> Option<(ValueNode<'a>, u32)> {
     let s = slot(index, root.shift);
 
     if !bit_set(root.bitmap, s) {
@@ -206,12 +219,17 @@ fn arr_get_root<'a>(buffer: &'a [u8], root: &ArrRootValue<'a>, index: u32) -> Op
     } else {
         // Leaf node: child_addr points to the value
         let value_bytes = buffer.get(child_addr as usize..)?;
-        ValueNode::new(value_bytes)
+        let value_node = ValueNode::new(value_bytes)?;
+        Some((value_node, child_addr))
     }
 }
 
 /// Traverse from a child array node.
-fn arr_get_child<'a>(buffer: &'a [u8], child: &ArrChildValue<'a>, index: u32) -> Option<ValueNode<'a>> {
+fn arr_get_child<'a>(
+    buffer: &'a [u8],
+    child: &ArrChildValue<'a>,
+    index: u32,
+) -> Option<(ValueNode<'a>, u32)> {
     let s = slot(index, child.shift);
 
     if !bit_set(child.bitmap, s) {
@@ -233,7 +251,8 @@ fn arr_get_child<'a>(buffer: &'a [u8], child: &ArrChildValue<'a>, index: u32) ->
     } else {
         // Leaf node: child_addr points to the value
         let value_bytes = buffer.get(child_addr as usize..)?;
-        ValueNode::new(value_bytes)
+        let value_node = ValueNode::new(value_bytes)?;
+        Some((value_node, child_addr))
     }
 }
 
@@ -691,7 +710,7 @@ mod tests {
             b'T', b'R', b'O', b'N',
         ];
 
-        let result = arr_get(&buffer, 0x09, 0, 1);
+        let result = arr_get(&buffer, 0x09, 0, 1).map(|(v, _)| v);
         assert_eq!(result, Some(ValueNode::I64(42)));
 
         // Out of bounds
@@ -721,8 +740,8 @@ mod tests {
             b'T', b'R', b'O', b'N',
         ];
 
-        assert_eq!(arr_get(&buffer, 0x12, 0, 2), Some(ValueNode::I64(10)));
-        assert_eq!(arr_get(&buffer, 0x12, 1, 2), Some(ValueNode::I64(20)));
+        assert_eq!(arr_get(&buffer, 0x12, 0, 2).map(|(v, _)| v), Some(ValueNode::I64(10)));
+        assert_eq!(arr_get(&buffer, 0x12, 1, 2).map(|(v, _)| v), Some(ValueNode::I64(20)));
         assert_eq!(arr_get(&buffer, 0x12, 2, 2), None);
     }
 
@@ -746,17 +765,17 @@ mod tests {
         let root_addr = encode_arr_root(&mut buffer, false, 0, 0b1, 1, &[val_addr]);
 
         // Verify initial state
-        assert_eq!(arr_get(&buffer, root_addr, 0, 1), Some(ValueNode::I64(42)));
+        assert_eq!(arr_get(&buffer, root_addr, 0, 1).map(|(v, _)| v), Some(ValueNode::I64(42)));
 
         // Update to [100]
         let new_val_addr = encode_i64(&mut buffer, 100);
         let new_root_addr = arr_set(&mut buffer, root_addr, 0, new_val_addr, 1).unwrap();
 
         // Verify new state
-        assert_eq!(arr_get(&buffer, new_root_addr, 0, 1), Some(ValueNode::I64(100)));
+        assert_eq!(arr_get(&buffer, new_root_addr, 0, 1).map(|(v, _)| v), Some(ValueNode::I64(100)));
 
         // Old root still works (COW)
-        assert_eq!(arr_get(&buffer, root_addr, 0, 1), Some(ValueNode::I64(42)));
+        assert_eq!(arr_get(&buffer, root_addr, 0, 1).map(|(v, _)| v), Some(ValueNode::I64(42)));
     }
 
     #[test]
@@ -774,8 +793,8 @@ mod tests {
         let new_root = arr_set(&mut buffer, root_addr, 1, new_val, 2).unwrap();
 
         // Verify
-        assert_eq!(arr_get(&buffer, new_root, 0, 2), Some(ValueNode::I64(10)));
-        assert_eq!(arr_get(&buffer, new_root, 1, 2), Some(ValueNode::I64(99)));
+        assert_eq!(arr_get(&buffer, new_root, 0, 2).map(|(v, _)| v), Some(ValueNode::I64(10)));
+        assert_eq!(arr_get(&buffer, new_root, 1, 2).map(|(v, _)| v), Some(ValueNode::I64(99)));
     }
 
     #[test]
@@ -804,8 +823,8 @@ mod tests {
         let (new_root, new_len) = arr_append(&mut buffer, root_addr, &[val1], 1).unwrap();
 
         assert_eq!(new_len, 2);
-        assert_eq!(arr_get(&buffer, new_root, 0, 2), Some(ValueNode::I64(10)));
-        assert_eq!(arr_get(&buffer, new_root, 1, 2), Some(ValueNode::I64(20)));
+        assert_eq!(arr_get(&buffer, new_root, 0, 2).map(|(v, _)| v), Some(ValueNode::I64(10)));
+        assert_eq!(arr_get(&buffer, new_root, 1, 2).map(|(v, _)| v), Some(ValueNode::I64(20)));
     }
 
     #[test]
@@ -824,9 +843,9 @@ mod tests {
         let (new_root, new_len) = arr_append(&mut buffer, root_addr, &[val1, val2, val3], 1).unwrap();
 
         assert_eq!(new_len, 4);
-        assert_eq!(arr_get(&buffer, new_root, 0, 4), Some(ValueNode::I64(1)));
-        assert_eq!(arr_get(&buffer, new_root, 1, 4), Some(ValueNode::I64(2)));
-        assert_eq!(arr_get(&buffer, new_root, 2, 4), Some(ValueNode::I64(3)));
-        assert_eq!(arr_get(&buffer, new_root, 3, 4), Some(ValueNode::I64(4)));
+        assert_eq!(arr_get(&buffer, new_root, 0, 4).map(|(v, _)| v), Some(ValueNode::I64(1)));
+        assert_eq!(arr_get(&buffer, new_root, 1, 4).map(|(v, _)| v), Some(ValueNode::I64(2)));
+        assert_eq!(arr_get(&buffer, new_root, 2, 4).map(|(v, _)| v), Some(ValueNode::I64(3)));
+        assert_eq!(arr_get(&buffer, new_root, 3, 4).map(|(v, _)| v), Some(ValueNode::I64(4)));
     }
 }
