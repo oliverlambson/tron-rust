@@ -1,4 +1,4 @@
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub struct ArrRootValue<'a> {
     pub(crate) is_branch: bool,
     pub(crate) node_len: u32,
@@ -22,7 +22,7 @@ impl<'a> ArrRootValue<'a> {
         self.length == 0
     }
 }
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub struct ArrChildValue<'a> {
     pub(crate) is_branch: bool,
     pub(crate) node_len: u32,
@@ -40,12 +40,12 @@ fn to_u32_iterator(bytes: &[u8]) -> impl Iterator<Item = u32> + '_ {
         .chunks_exact(4)
         .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
 }
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum ArrValue<'a> {
     Root(ArrRootValue<'a>),
     Child(ArrChildValue<'a>),
 }
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub struct MapBranchValue<'a> {
     pub(crate) node_len: u32,
     pub(crate) bitmap: u32,
@@ -56,7 +56,7 @@ impl<'a> MapBranchValue<'a> {
         to_u32_iterator(self.entries_buffer)
     }
 }
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub struct MapLeafValue<'a> {
     pub(crate) node_len: u32,
     pub(crate) entries_buffer: &'a [u8],
@@ -71,12 +71,12 @@ impl<'a> MapLeafValue<'a> {
         })
     }
 }
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum MapValue<'a> {
     Branch(MapBranchValue<'a>),
     Leaf(MapLeafValue<'a>),
 }
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum ValueNode<'a> {
     // For small primitive values (bool, i64, f64, u32), we copy them into Rust
     // types rather than storing references into the byte array. This is more

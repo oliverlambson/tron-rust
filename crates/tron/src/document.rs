@@ -36,6 +36,11 @@ impl<'a> Tron<'a> {
         &self.buffer
     }
 
+    /// Get the root address.
+    pub fn root_addr(&self) -> u32 {
+        self.root_addr
+    }
+
     /// Get array element if root is an array.
     pub fn get_arr(&self, index: u32) -> Option<ValueNode<'_>> {
         match &self.root {
@@ -44,7 +49,7 @@ impl<'a> Tron<'a> {
                     ArrValue::Root(root) => root.length,
                     ArrValue::Child(_) => return None, // Document root should be Root
                 };
-                arr::arr_get(&self.buffer, self.root_addr, index, length)
+                arr::arr_get(&self.buffer, self.root_addr, index, length).map(|(v, _)| v)
             }
             _ => None,
         }
@@ -53,7 +58,7 @@ impl<'a> Tron<'a> {
     /// Get map value if root is a map.
     pub fn get_map(&self, key: &str) -> Option<ValueNode<'_>> {
         match &self.root {
-            ValueNode::Map(_) => map::map_get(&self.buffer, self.root_addr, key),
+            ValueNode::Map(_) => map::map_get(&self.buffer, self.root_addr, key).map(|(v, _)| v),
             _ => None,
         }
     }

@@ -157,13 +157,18 @@ fn bit_set(bitmap: u32, slot: u8) -> bool {
 /// * `key` - Key to look up
 ///
 /// # Returns
-/// `Some(ValueNode)` if key exists, `None` otherwise.
-pub fn map_get<'a>(buffer: &'a [u8], node_addr: u32, key: &str) -> Option<ValueNode<'a>> {
+/// `Some((ValueNode, address))` if key exists, `None` otherwise.
+pub fn map_get<'a>(buffer: &'a [u8], node_addr: u32, key: &str) -> Option<(ValueNode<'a>, u32)> {
     map_get_depth(buffer, node_addr, key, 0)
 }
 
 /// Internal recursive traversal with depth tracking.
-fn map_get_depth<'a>(buffer: &'a [u8], node_addr: u32, key: &str, depth: u8) -> Option<ValueNode<'a>> {
+fn map_get_depth<'a>(
+    buffer: &'a [u8],
+    node_addr: u32,
+    key: &str,
+    depth: u8,
+) -> Option<(ValueNode<'a>, u32)> {
     let node_bytes = buffer.get(node_addr as usize..)?;
     let node = ValueNode::new(node_bytes)?;
 
@@ -174,7 +179,12 @@ fn map_get_depth<'a>(buffer: &'a [u8], node_addr: u32, key: &str, depth: u8) -> 
 }
 
 /// Traverse a map node (branch or leaf).
-fn map_get_node<'a>(buffer: &'a [u8], map: &MapValue<'a>, key: &str, depth: u8) -> Option<ValueNode<'a>> {
+fn map_get_node<'a>(
+    buffer: &'a [u8],
+    map: &MapValue<'a>,
+    key: &str,
+    depth: u8,
+) -> Option<(ValueNode<'a>, u32)> {
     match map {
         MapValue::Branch(branch) => map_get_branch(buffer, branch, key, depth),
         MapValue::Leaf(leaf) => map_get_leaf(buffer, leaf, key),
@@ -182,7 +192,12 @@ fn map_get_node<'a>(buffer: &'a [u8], map: &MapValue<'a>, key: &str, depth: u8) 
 }
 
 /// Traverse a branch node.
-fn map_get_branch<'a>(buffer: &'a [u8], branch: &MapBranchValue<'a>, key: &str, depth: u8) -> Option<ValueNode<'a>> {
+fn map_get_branch<'a>(
+    buffer: &'a [u8],
+    branch: &MapBranchValue<'a>,
+    key: &str,
+    depth: u8,
+) -> Option<(ValueNode<'a>, u32)> {
     let hash = xxh32(key.as_bytes(), 0);
     let s = slot(hash, depth);
 
@@ -203,7 +218,11 @@ fn map_get_branch<'a>(buffer: &'a [u8], branch: &MapBranchValue<'a>, key: &str, 
 }
 
 /// Search a leaf node for the key.
-fn map_get_leaf<'a>(buffer: &'a [u8], leaf: &MapLeafValue<'a>, key: &str) -> Option<ValueNode<'a>> {
+fn map_get_leaf<'a>(
+    buffer: &'a [u8],
+    leaf: &MapLeafValue<'a>,
+    key: &str,
+) -> Option<(ValueNode<'a>, u32)> {
     // Linear search through key/value pairs
     for (key_addr, value_addr) in leaf.pairs() {
         let key_bytes = buffer.get(key_addr as usize..)?;
@@ -213,7 +232,8 @@ fn map_get_leaf<'a>(buffer: &'a [u8], leaf: &MapLeafValue<'a>, key: &str) -> Opt
             && stored_key == key
         {
             let value_bytes = buffer.get(value_addr as usize..)?;
-            return ValueNode::new(value_bytes);
+            let value_node = ValueNode::new(value_bytes)?;
+            return Some((value_node, value_addr));
         }
     }
 
@@ -245,6 +265,21 @@ pub fn map_set(
 ) -> Result<u32, MapError> {
     let key_addr = encode_value(buffer, Value::Txt(key));
     let value_addr = encode_value(buffer, value);
+    let hash = xxh32(key.as_bytes(), 0);
+    map_set_depth(buffer, node_addr, key_addr, value_addr, key, hash, 0)
+}
+
+/// Set a key to point to an existing value address (for COW path updates).
+///
+/// Unlike `map_set`, this doesn't encode a new value - it updates the pointer
+/// to an existing address in the buffer.
+pub fn map_set_addr(
+    buffer: &mut Vec<u8>,
+    node_addr: u32,
+    key: &str,
+    value_addr: u32,
+) -> Result<u32, MapError> {
+    let key_addr = encode_value(buffer, Value::Txt(key));
     let hash = xxh32(key.as_bytes(), 0);
     map_set_depth(buffer, node_addr, key_addr, value_addr, key, hash, 0)
 }
@@ -874,7 +909,7 @@ mod tests {
             b'T', b'R', b'O', b'N',
         ];
 
-        let result = map_get(&buffer, 0x0C, "hi");
+        let result = map_get(&buffer, 0x0C, "hi").map(|(v, _)| v);
         assert_eq!(result, Some(ValueNode::I64(42)));
 
         // Non-existent key
@@ -930,9 +965,9 @@ mod tests {
             b'T', b'R', b'O', b'N',
         ];
 
-        assert_eq!(map_get(&buffer, 0x47, "value"), Some(ValueNode::I64(1)));
-        assert_eq!(map_get(&buffer, 0x47, "path"), Some(ValueNode::I64(2)));
-        assert_eq!(map_get(&buffer, 0x47, "op"), Some(ValueNode::I64(3)));
+        assert_eq!(map_get(&buffer, 0x47, "value").map(|(v, _)| v), Some(ValueNode::I64(1)));
+        assert_eq!(map_get(&buffer, 0x47, "path").map(|(v, _)| v), Some(ValueNode::I64(2)));
+        assert_eq!(map_get(&buffer, 0x47, "op").map(|(v, _)| v), Some(ValueNode::I64(3)));
         assert_eq!(map_get(&buffer, 0x47, "missing"), None);
     }
 
@@ -946,17 +981,17 @@ mod tests {
         let root_addr = map_set(&mut buffer, root_addr, "hi", Value::I64(42)).unwrap();
 
         // Verify initial state
-        assert_eq!(map_get(&buffer, root_addr, "hi"), Some(ValueNode::I64(42)));
+        assert_eq!(map_get(&buffer, root_addr, "hi").map(|(v, _)| v), Some(ValueNode::I64(42)));
 
         // Add new key {"bye": 100}
         let new_root = map_set(&mut buffer, root_addr, "bye", Value::I64(100)).unwrap();
 
         // Verify both keys exist
-        assert_eq!(map_get(&buffer, new_root, "hi"), Some(ValueNode::I64(42)));
-        assert_eq!(map_get(&buffer, new_root, "bye"), Some(ValueNode::I64(100)));
+        assert_eq!(map_get(&buffer, new_root, "hi").map(|(v, _)| v), Some(ValueNode::I64(42)));
+        assert_eq!(map_get(&buffer, new_root, "bye").map(|(v, _)| v), Some(ValueNode::I64(100)));
 
         // Old root still works (COW)
-        assert_eq!(map_get(&buffer, root_addr, "hi"), Some(ValueNode::I64(42)));
+        assert_eq!(map_get(&buffer, root_addr, "hi").map(|(v, _)| v), Some(ValueNode::I64(42)));
         assert_eq!(map_get(&buffer, root_addr, "bye"), None);
     }
 
@@ -973,10 +1008,10 @@ mod tests {
         let new_root = map_set(&mut buffer, root_addr, "key", Value::I64(999)).unwrap();
 
         // Verify update
-        assert_eq!(map_get(&buffer, new_root, "key"), Some(ValueNode::I64(999)));
+        assert_eq!(map_get(&buffer, new_root, "key").map(|(v, _)| v), Some(ValueNode::I64(999)));
 
         // Old root unchanged (COW)
-        assert_eq!(map_get(&buffer, root_addr, "key"), Some(ValueNode::I64(1)));
+        assert_eq!(map_get(&buffer, root_addr, "key").map(|(v, _)| v), Some(ValueNode::I64(1)));
     }
 
     #[test]
@@ -996,10 +1031,10 @@ mod tests {
 
         // Verify "a" is gone, "b" remains
         assert_eq!(map_get(&buffer, new_root, "a"), None);
-        assert_eq!(map_get(&buffer, new_root, "b"), Some(ValueNode::I64(2)));
+        assert_eq!(map_get(&buffer, new_root, "b").map(|(v, _)| v), Some(ValueNode::I64(2)));
 
         // Old root unchanged (COW)
-        assert_eq!(map_get(&buffer, root_addr, "a"), Some(ValueNode::I64(1)));
+        assert_eq!(map_get(&buffer, root_addr, "a").map(|(v, _)| v), Some(ValueNode::I64(1)));
     }
 
     #[test]
@@ -1031,7 +1066,7 @@ mod tests {
         let new_root = map_set(&mut buffer, root_addr, "op", Value::I64(2)).unwrap(); // hashes to slot 11
 
         // Both keys should be accessible
-        assert_eq!(map_get(&buffer, new_root, "value"), Some(ValueNode::I64(1)));
-        assert_eq!(map_get(&buffer, new_root, "op"), Some(ValueNode::I64(2)));
+        assert_eq!(map_get(&buffer, new_root, "value").map(|(v, _)| v), Some(ValueNode::I64(1)));
+        assert_eq!(map_get(&buffer, new_root, "op").map(|(v, _)| v), Some(ValueNode::I64(2)));
     }
 }
